@@ -2,7 +2,7 @@ from app.core.config import client, embeddings, settings
 
 def retriever_node(state):
     """
-    Node 2: Retrieval Agent - Phiên bản "Ăn tạp" (Chấp nhận mọi loại dữ liệu)
+    Node 2: Retrieval Agent - Có lọc điểm số (Score Threshold)
     """
     query = state.get("standalone_query", state["query"])
     limit = state.get("search_limit", 3)
@@ -16,49 +16,43 @@ def retriever_node(state):
         vector = embeddings.embed_query(query)
         
         # 1. Tìm kiếm trong Qdrant
+        # Lưu ý: score_threshold=0.5 nghĩa là chỉ lấy kết quả giống trên 50%
         try:
             results = client.search(
                 collection_name=settings.COLLECTION_NAME,
                 query_vector=vector, 
-                limit=limit
+                limit=limit,
+                score_threshold=0.35  # <--- THÊM DÒNG NÀY (Thử 0.35 - 0.5 tùy dữ liệu)
             )
         except AttributeError:
+            # Fallback cho bản cũ
             results = client.query_points(
                 collection_name=settings.COLLECTION_NAME,
                 query=vector, 
-                limit=limit
+                limit=limit,
+                score_threshold=0.35 
             ).points
             
         docs = []
         for r in results:
             payload = r.payload or {}
             
-            # --- SỬA LOGIC: CHẤP NHẬN MỌI KEY (CŨ & MỚI) ---
-            
-            # 1. Cố gắng lấy Số hiệu (VD: Điều 51)
-            # Thử tìm key 'so_hieu' (mới), nếu không có thì tìm 'law_id' (cũ), không có nữa tìm 'article_id'
+            # --- SỬA LOGIC LẤY NGUỒN ---
             so_hieu = payload.get("so_hieu") or payload.get("law_id") or payload.get("article_id") or ""
-            
-            # 2. Cố gắng lấy Tên luật (VD: Luật Hôn nhân...)
-            # Thử tìm 'loai_van_ban' (mới), nếu không có thì tìm 'law_name' (cũ)
             ten_luat = payload.get("loai_van_ban") or payload.get("law_name") or ""
             
-            # 3. Ghép chuỗi hiển thị
             if so_hieu and ten_luat:
-                source_name = f"{so_hieu} - {ten_luat}" # Chuẩn nhất
+                source_name = f"{so_hieu} - {ten_luat}"
             elif so_hieu:
-                source_name = so_hieu # Chỉ có điều
-            elif ten_luat:
-                source_name = ten_luat # Chỉ có luật
+                source_name = so_hieu
             else:
-                # 4. Đường cùng: Lấy trường 'source' hoặc 'question' cũ
-                source_name = payload.get("source") or payload.get("question_sample") or "Văn bản pháp luật"
+                source_name = payload.get("source") or "Văn bản pháp luật"
             
-            # Làm sạch chuỗi (xóa khoảng trắng thừa)
             source_name = str(source_name).strip()
-            # -----------------------------------------------
+            
+            # --- DEBUG MỚI: In ra Source Name để biết nó tìm thấy Điều mấy ---
+            print(f"   -> Tìm thấy: {source_name} (Score: {r.score:.4f})")
 
-            # Lấy nội dung (Cũng thử mọi trường có thể)
             content = (
                 payload.get('combine_Article_Content') or 
                 payload.get('page_content') or 
@@ -72,6 +66,9 @@ def retriever_node(state):
                 "content": content
             })
             
+        if not docs:
+            print("   -> ⚠️ Không tìm thấy văn bản nào đủ độ khớp (Low Score).")
+
         return {"retrieved_docs": docs}
         
     except Exception as e:

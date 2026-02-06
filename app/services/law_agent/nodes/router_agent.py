@@ -3,32 +3,39 @@ from langchain_core.output_parsers import JsonOutputParser
 from app.core.config import llm
 
 def router_node(state):
-    """Node 1: Router Agent"""
+    """Node 1: Router Agent - Điều hướng và xác định số lượng tài liệu cần tìm"""
     query = state.get("standalone_query", state["query"])
     print(f"🧠 [ROUTER]: Phân tích hướng đi cho '{query}'...")
 
     prompt = PromptTemplate(
         template="""Bạn là Router điều hướng câu hỏi pháp lý.
-        Phân loại câu hỏi vào một trong các nhóm sau:
+        Nhiệm vụ: Phân loại câu hỏi và xác định số lượng văn bản luật cần tìm (limit).
         
-        - "SEARCH_PENAL": Hỏi về mức PHẠT tiền, phạt tù, tội danh, vi phạm GIAO THÔNG, trật tự xã hội.
-        - "SEARCH_PROCEDURE": Hỏi về THỦ TỤC, hồ sơ, giấy tờ, nơi nộp đơn, quy trình tòa án.
-        - "SEARCH_CIVIL": Hỏi về ly hôn, quyền nuôi con, đất đai, thừa kế, hợp đồng dân sự.
-        - "NO_SEARCH": Câu hỏi xã giao (Chào bạn, who are you) hoặc không liên quan luật.
-
-        Trả về JSON duy nhất:
-        {{
-            "intent": "SEARCH_PENAL" | "SEARCH_PROCEDURE" | "SEARCH_CIVIL" | "NO_SEARCH",
-            "limit": <số lượng văn bản (int)>
-        }}
+        QUY TẮC PHÂN LOẠI & LIMIT (Cập nhật):
         
-        Quy tắc limit:
-        - SEARCH_PENAL: 3
-        - SEARCH_PROCEDURE: 5
-        - SEARCH_CIVIL: 4
-        - NO_SEARCH: 0
+        1. "SEARCH_PENAL": Hình sự (Giết người, trộm cắp, ma túy, đánh nhau, án tù...).
+           - Đặc điểm: Vector Search thường bị nhiễu bởi các điều luật về hình phạt chung (án treo, tử hình...).
+           - YÊU CẦU ĐẶC BIỆT: Set limit = 10 (Phải lấy rộng để chắc chắn bắt được đúng Điều luật cụ thể).
+           
+        2. "SEARCH_CIVIL": Dân sự (Đất đai, hợp đồng, bồi thường, thừa kế...).
+           - Yêu cầu: Set limit = 5
+           
+        3. "SEARCH_PROCEDURE": Thủ tục tố tụng/Hành chính (Nộp đơn ở đâu, hồ sơ gồm gì...).
+           - Yêu cầu: Set limit = 4
+           
+        4. "SEARCH_MARRIAGE": Hôn nhân gia đình.
+           - Yêu cầu: Set limit = 4
+           
+        5. "NO_SEARCH": Xã giao (Chào bạn), câu hỏi vô nghĩa hoặc không liên quan luật.
+           - Yêu cầu: Set limit = 0
 
         Câu hỏi: {query}
+        
+        Trả về JSON duy nhất (Không giải thích):
+        {{
+            "intent": "SEARCH_PENAL" | "SEARCH_CIVIL" | "SEARCH_PROCEDURE" | "SEARCH_MARRIAGE" | "NO_SEARCH",
+            "limit": <số nguyên>
+        }}
         """,
         input_variables=["query"],
     )
@@ -38,12 +45,12 @@ def router_node(state):
         decision = chain.invoke({"query": query})
     except Exception as e:
         print(f"⚠️ Lỗi Router: {e}")
-        # Fallback an toàn, nhưng logic hơn: Mặc định tìm 3 văn bản
-        decision = {"intent": "SEARCH_CIVIL", "limit": 3}
+        # Fallback an toàn: Nếu lỗi thì mặc định tìm Hình sự với limit 10
+        decision = {"intent": "SEARCH_PENAL", "limit": 10}
 
     print(f"   -> Quyết định: {decision}")
     
     return {
-        "intent": decision.get("intent", "SEARCH_CIVIL"),
-        "search_limit": decision.get("limit", 3)
+        "intent": decision.get("intent", "SEARCH_PENAL"),
+        "search_limit": decision.get("limit", 10) # Default an toàn
     }
