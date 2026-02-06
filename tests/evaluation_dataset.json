@@ -1,0 +1,10 @@
+[
+  {
+    "question": "Tôi trộm chiếc xe máy trị giá 30 triệu thì bị phạt tù bao nhiêu năm?",
+    "ground_truth": "Theo Khoản 1 Điều 173 Bộ luật Hình sự 2015, người trộm cắp tài sản trị giá từ 2.000.000 đồng đến dưới 50.000.000 đồng thì bị phạt cải tạo không giam giữ đến 03 năm hoặc phạt tù từ 06 tháng đến 03 năm."
+  },
+  {
+    "question": "Thủ tục ly hôn đơn phương nộp ở đâu?",
+    "ground_truth": "Theo Bộ luật Tố tụng Dân sự 2015, hồ sơ ly hôn đơn phương cần nộp tại Tòa án nhân dân cấp huyện nơi bị đơn (người bị kiện) đang cư trú hoặc làm việc."
+  }
+]
