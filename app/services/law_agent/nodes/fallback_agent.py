@@ -1,25 +1,29 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from app.core.config import llm
+from app.core.clients import get_llm
+from app.services.law_agent.state import LawAgentState
 
-def fallback_node(state):
+def fallback_node(state: LawAgentState) -> LawAgentState:
+    llm = get_llm()
     print("🛡️ [FALLBACK]: Kích hoạt quy trình xử lý thiếu thông tin...")
     
-    status = state.get("check_status", "NO_LAW")
-    query = state.get("standalone_query", state["query"])
-    docs = state.get("retrieved_docs", [])
+    status = state.check_status or "NO_LAW"
+    query = state.standalone_query or state.query
+    docs = state.retrieved_docs or []
     
     # TRƯỜNG HỢP 1: KHÔNG TÌM THẤY LUẬT
     if status == "NO_LAW" or not docs:
-        msg = (
+        state.generation = (
             "Xin lỗi, hiện tại cơ sở dữ liệu của tôi chưa có văn bản pháp lý chính xác về vấn đề này. "
             "Để đảm bảo an toàn pháp lý, tôi xin phép không tự suy đoán. Bạn vui lòng tham vấn luật sư trực tiếp."
         )
-        return {"generation": msg, "sources": []}
+        state.sources = []
+        state.node_trace.append("fallback")
+        return state
 
     # TRƯỜNG HỢP 2: CÓ LUẬT NHƯNG THIẾU THÔNG TIN USER
     if status == "MISSING_INFO":
-        context_text = "\n".join([f"- {d['content']}" for d in docs])
+        context_text = "\n".join([f"- {d.content}" for d in docs])
         
         prompt = PromptTemplate(
             template="""Bạn là Luật sư tư vấn.
@@ -41,14 +45,12 @@ def fallback_node(state):
         chain = prompt | llm | StrOutputParser()
         clarification_msg = chain.invoke({"context": context_text, "query": query})
         
-        unique_sources = list(set([d["source"] for d in docs]))
-        
-        return {
-            "generation": clarification_msg,
-            "sources": unique_sources
-        }
+        state.generation = clarification_msg
+        state.sources = list(set([d.law_name for d in docs]))
+        state.node_trace.append("fallback")
+        return state
 
-    return {
-        "generation": "Hệ thống đang gặp sự cố xác định trạng thái.",
-        "sources": []
-    }
+    state.generation = "Hệ thống đang gặp sự cố xác định trạng thái."
+    state.sources = []
+    state.node_trace.append("fallback")
+    return state

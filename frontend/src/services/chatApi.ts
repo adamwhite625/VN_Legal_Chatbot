@@ -25,3 +25,13 @@ export const createSession = () => api.post("/chat/session/start");
 export const deleteSession = (id: number) => api.delete(`/chat/session/${id}`);
 export const sendMessage = (payload: { query: string; session_id: number }) =>
   api.post<ChatResponse>("/chat/send", payload);
+
+export const getAdminStats = async () => {
+  const response = await api.get("/admin/stats");
+  return response.data;
+};
+
+export const getAllUsers = async () => {
+  const response = await api.get("/admin/users");
+  return response.data;
+};

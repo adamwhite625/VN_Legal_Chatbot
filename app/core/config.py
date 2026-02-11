@@ -1,71 +1,95 @@
-import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from langchain_huggingface import HuggingFaceEmbeddings
-from qdrant_client import QdrantClient
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
 
-# --- THAY ĐỔI: IMPORT OPENAI ---
-from langchain_openai import ChatOpenAI 
-# -------------------------------
 
-# ==========================================
-# 1. CLASS CẤU HÌNH (SETTINGS)
-# ==========================================
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Legal Chatbot"
+
+    # -------------------------
+    # Auth / JWT (legacy but required by env)
+    # -------------------------
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
+
+    # -------------------------
+    # Vector DB (legacy naming)
+    # -------------------------
+    DB_SERVER: str | None = None
+    COLLECTION_NAME: str | None = None
+
+    # -------------------------
+    # Optional LLM providers (not used yet)
+    # -------------------------
+    GOOGLE_API_KEY: str | None = None
+    COHERE_API_KEY: str | None = None
+    HUGGINGFACE_TOKEN: str | None = None
+
+    # -------------------------
+    # Application
+    # -------------------------
+    PROJECT_NAME: str = "VN Legal Chatbot"
     API_V1_STR: str = "/api/v1"
+    ENVIRONMENT: str = Field(
+        default="development",
+        pattern="^(development|staging|production)$"
+    )
 
-    # --- Database MySQL ---
-    DB_USER: str = "root"
-    DB_PASSWORD: str = "legalbot_password"
-    DB_HOST: str = "localhost"
-    DB_PORT: int = 3306
-    DB_NAME: str = "law_chatbot_db"
+    # -------------------------
+    # Security
+    # -------------------------
+    SECRET_KEY: str = Field(..., min_length=32)
 
-    # --- Vector DB ---
+    # -------------------------
+    # OpenAI / LLM
+    # -------------------------
+    OPENAI_API_KEY: str
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_TEMPERATURE: float = 0.2
+
+    # -------------------------
+    # Embeddings
+    # -------------------------
+    EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+    # -------------------------
+    # Vector Database (Qdrant)
+    # -------------------------
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
-    COLLECTION_NAME: str = "law_data"
-    
-    # --- Security ---
-    SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    
-    # --- External APIs ---
-    # GOOGLE_API_KEY: str  <-- Bỏ cái này
-    OPENAI_API_KEY: str  # <-- Thêm cái này
 
-    model_config = SettingsConfigDict(
-        env_file=".env", 
-        env_ignore_empty=True,
-        extra="ignore"
-    )
+    # -------------------------
+    # Database
+    # -------------------------
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 3306
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_NAME: str
+
+    # -------------------------
+    # Validators (Pydantic v2)
+    # -------------------------
+    @field_validator("OPENAI_TEMPERATURE")
+    @classmethod
+    def validate_temperature(cls, value: float) -> float:
+        if not 0 <= value <= 1:
+            raise ValueError("OPENAI_TEMPERATURE must be between 0 and 1")
+        return value
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
 
     @property
     def SQLALCHEMY_DATABASE_URL(self) -> str:
-        return f"mysql+mysqlconnector://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        """
+        Build database connection URL for SQLAlchemy.
+        """
+        return (
+            f"mysql+pymysql://{self.DB_USER}:"
+            f"{self.DB_PASSWORD}@"
+            f"{self.DB_HOST}:"
+            f"{self.DB_PORT}/"
+            f"{self.DB_NAME}"
+        )
 
 settings = Settings()
-
-# ==========================================
-# 2. KHỞI TẠO CÁC KẾT NỐI
-# ==========================================
-
-# --- Qdrant Client ---
-client = QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
-
-# --- Embeddings Model (GIỮ NGUYÊN - KHÔNG ĐƯỢC ĐỔI) ---
-# Nếu đổi cái này, bạn bắt buộc phải xóa DB làm lại từ đầu.
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-
-# --- LLM (CHUYỂN SANG OPENAI) ---
-# Khuyên dùng "gpt-4o-mini": Rẻ bằng 1/10 gpt-4, thông minh hơn gpt-3.5
-llm = ChatOpenAI(
-    model="gpt-4o-mini", 
-    api_key=settings.OPENAI_API_KEY,
-    temperature=0
-)
-
-print(f" Config: OpenAI (gpt-4o-mini) & Qdrant at {settings.QDRANT_HOST}")

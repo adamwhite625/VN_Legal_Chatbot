@@ -1,76 +1,139 @@
-from app.core.config import client, embeddings, settings
+"""
+Retriever node for Legal Agentic RAG.
 
-def retriever_node(state):
-    """
-    Node 2: Retrieval Agent - Có lọc điểm số (Score Threshold)
-    """
-    query = state.get("standalone_query", state["query"])
-    limit = state.get("search_limit", 3)
-    
-    if limit == 0:
-        return {"retrieved_docs": []}
+Production-ready:
+- Typed document output
+- Score threshold
+- Safe failure
+"""
 
-    print(f"🧠 [RETRIEVER]: Đang tìm {limit} văn bản cho: {query}")
-    
+from app.core.config import settings
+from typing import List
+
+from app.core.clients import get_qdrant_client, get_embeddings
+from app.services.law_agent.state import (
+    LawAgentState,
+    RetrievedDocument,
+)
+
+# Production-grade retrieval thresholds
+HARD_THRESHOLD = 0.60  # Reject garbage results
+
+# Domain filtering for procedural queries
+DOMAIN_KEYWORDS = {
+    "SEARCH_PROCEDURE": ["Doanh nghiệp", "Hôn nhân", "Lao động", "Thuế"],
+    "SEARCH_CONSULTATION": [],  # Accept all domains
+}
+
+
+def retriever_node(state: LawAgentState) -> LawAgentState:
+    """
+    Retrieve relevant legal documents from Qdrant.
+    """
+
     try:
-        vector = embeddings.embed_query(query)
+        print("\n🔍 [RETRIEVER] Starting retrieval node...")
+        query = state.standalone_query or state.query
         
-        # 1. Tìm kiếm trong Qdrant
-        # Lưu ý: score_threshold=0.5 nghĩa là chỉ lấy kết quả giống trên 50%
-        try:
-            results = client.search(
-                collection_name=settings.COLLECTION_NAME,
-                query_vector=vector, 
-                limit=limit,
-                score_threshold=0.35  # <--- THÊM DÒNG NÀY (Thử 0.35 - 0.5 tùy dữ liệu)
-            )
-        except AttributeError:
-            # Fallback cho bản cũ
-            results = client.query_points(
-                collection_name=settings.COLLECTION_NAME,
-                query=vector, 
-                limit=limit,
-                score_threshold=0.35 
-            ).points
-            
-        docs = []
-        for r in results:
-            payload = r.payload or {}
-            
-            # --- SỬA LOGIC LẤY NGUỒN ---
-            so_hieu = payload.get("so_hieu") or payload.get("law_id") or payload.get("article_id") or ""
-            ten_luat = payload.get("loai_van_ban") or payload.get("law_name") or ""
-            
-            if so_hieu and ten_luat:
-                source_name = f"{so_hieu} - {ten_luat}"
-            elif so_hieu:
-                source_name = so_hieu
-            else:
-                source_name = payload.get("source") or "Văn bản pháp luật"
-            
-            source_name = str(source_name).strip()
-            
-            # --- DEBUG MỚI: In ra Source Name để biết nó tìm thấy Điều mấy ---
-            print(f"   -> Tìm thấy: {source_name} (Score: {r.score:.4f})")
-
-            content = (
-                payload.get('combine_Article_Content') or 
-                payload.get('page_content') or 
-                payload.get('content') or 
-                payload.get('law_content') or 
-                ""
-            )
-
-            docs.append({
-                "source": source_name,
-                "content": content
-            })
-            
-        if not docs:
-            print("   -> ⚠️ Không tìm thấy văn bản nào đủ độ khớp (Low Score).")
-
-        return {"retrieved_docs": docs}
+        # Procedural queries: limit to 3 best documents
+        # Consultation queries: limit to 4
+        is_procedural = state.intent == "SEARCH_PROCEDURE"
+        limit = state.search_limit or (3 if is_procedural else 4)
         
+        print(f"   Query: {query}")
+        print(f"   Intent: {state.intent}")
+        print(f"   Limit: {limit}")
+        print(f"   Hard threshold: {HARD_THRESHOLD}")
+
+        qdrant = get_qdrant_client()
+        embeddings = get_embeddings()
+        print("   ✓ Clients initialized")
+
+        # Embed query
+        print("   📝 Embedding query...")
+        query_vector = embeddings.embed_query(query)
+        print(f"   ✓ Vector dimension: {len(query_vector)}")
+
+        # Search in Qdrant
+        print(f"   🔎 Searching in Qdrant (collection: {settings.COLLECTION_NAME})...")
+        results = qdrant.query_points(
+    collection_name=settings.COLLECTION_NAME,
+    query=query_vector,
+    limit=limit,
+    with_payload=True,
+).points
+
+
+        documents: List[RetrievedDocument] = []
+
+        print(f"\n   Raw search results ({len(results)} hits):")
+        for i, hit in enumerate(results):
+            print(f"      [{i}] Score: {hit.score:.4f}")
+            print(f"          Payload keys: {list(hit.payload.keys()) if hit.payload else 'None'}")
+            if hit.payload:
+                print(f"          so_hieu: {hit.payload.get('so_hieu', 'N/A')}")
+                print(f"          loai_van_ban: {hit.payload.get('loai_van_ban', 'N/A')}")
+
+        # Apply filtering
+        filtered_results = []
+        
+        for hit in results:
+            score = hit.score
+            payload = hit.payload or {}
+            loai_van_ban = payload.get("loai_van_ban", "")
+            so_hieu = payload.get("so_hieu", "?")
+            
+            # Hard threshold only (avoid garbage)
+            if score < HARD_THRESHOLD:
+                print(f"      ❌ Rejected: {score:.4f} < {HARD_THRESHOLD} (garbage)")
+                continue
+            
+            # Domain filter only (avoid wrong law system)
+            if is_procedural:
+                domain_filter = DOMAIN_KEYWORDS.get(state.intent, [])
+                if domain_filter and not any(keyword in loai_van_ban for keyword in domain_filter):
+                    print(f"      ⚠️ Filtered: '{loai_van_ban}' (wrong domain for {state.intent})")
+                    continue
+            
+            filtered_results.append(hit)
+            print(f"      ✅ Kept: {score:.4f} | {so_hieu} ({loai_van_ban})")
+        
+        # Sort by score (should already be sorted, but ensure it)
+        filtered_results.sort(key=lambda x: x.score, reverse=True)
+
+        for hit in filtered_results:
+            score = hit.score
+            payload = hit.payload or {}
+            
+            # Extract content with fallback
+            content = payload.get("page_content") or payload.get("combine_Article_Content", "")
+
+            documents.append(
+                RetrievedDocument(
+                    law_id=payload.get("so_hieu", "Không rõ điều"),
+                    law_name=payload.get("loai_van_ban", "Không rõ văn bản"),
+                    content=content,
+                    score=score,
+                )
+            )
+
+        print(f"\n   📊 Final result: {len(documents)} documents after filtering (from {len(results)} initial results)")
+        state.retrieved_docs = documents
+
+        if not documents:
+            print("   ⚠️ No documents found → Setting status to NO_LAW")
+            state.check_status = "NO_LAW"
+        else:
+            print(f"   ✅ Retrieved {len(documents)} relevant documents")
+
+        state.node_trace.append("retriever")
+
+        return state
+
     except Exception as e:
-        print(f"⚠️ Lỗi Retriever: {e}")
-        return {"retrieved_docs": []}
+        print(f"   ❌ ERROR in retriever: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        state.error_message = f"Retriever error: {str(e)}"
+        state.check_status = "NO_LAW"
+        return state

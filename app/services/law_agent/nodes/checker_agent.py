@@ -1,22 +1,51 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from app.core.config import llm
+from app.core.clients import get_llm
+from app.services.law_agent.state import LawAgentState
 
-# Định nghĩa cấu trúc JSON đầu ra
-# (Mẹo: Định nghĩa class Pydantic để parser chính xác hơn, nhưng dùng prompt text cũng ổn với GPT-4)
-def sufficiency_checker_node(state):
+def sufficiency_checker_node(state: LawAgentState) -> LawAgentState:
+    llm = get_llm()
     print("🧠 [CHECKER]: Đang kiểm tra độ đầy đủ của thông tin...")
     
-    query = state.get("standalone_query", state["query"])
-    docs = state.get("retrieved_docs", [])
-    chat_history = state.get("chat_history", "")
+    query = state.standalone_query or state.query
+    docs = state.retrieved_docs or []
+    chat_history = state.chat_history or ""
+    intent = state.intent or ""
     
-    # Nếu không tìm thấy văn bản nào -> NO_LAW
+    # ----------- LOGIC MỚI: Phân biệt MISSING_INFO vs NO_LAW -----------
+    
+    # 1. Query is vague only if extremely short (≤ 2 words)
+    is_query_vague = len(query.split()) <= 2
+    
+    # 2. Nếu intent quá chung chung
+    is_intent_generic = intent and intent in ["SEARCH_PENAL", "SEARCH_CIVIL"]
+    
+    # 3. Nếu không tìm thấy văn bản nào
     if not docs:
-        return {"check_status": "NO_LAW"}
+        # Nếu query mơ hồ HOẶC intent generic → MISSING_INFO (user cần phải cung cấp chi tiết hơn)
+        if is_query_vague or is_intent_generic:
+            print(f"   -> Query mơ hồ/intent chung chung → MISSING_INFO")
+            state.check_status = "MISSING_INFO"
+        else:
+            # Query cụ thể nhưng không tìm được → NO_LAW
+            print(f"   -> Query cụ thể nhưng không tìm được → NO_LAW")
+            state.check_status = "NO_LAW"
+        
+        state.node_trace.append("checker")
+        return state
+
+    # --- LOGIC MỚI: Auto-sufficient cho SEARCH_PROCEDURE ---
+    is_procedural = state.intent == "SEARCH_PROCEDURE"
+    query_words = len(query.split())
+    
+    if is_procedural and query_words >= 4:
+        print(f"   -> Procedural general query ({query_words} words) → SUFFICIENT (auto)")
+        state.check_status = "SUFFICIENT"
+        state.node_trace.append("checker")
+        return state
 
     # Tạo context từ văn bản tìm được
-    context_text = "\n\n".join([f"Văn bản: {d['source']}\nNội dung: {d['content']}" for d in docs])
+    context_text = "\n\n".join([f"Văn bản: {d.law_name}\nNội dung: {d.content}" for d in docs])
 
     # --- PROMPT ĐƯỢC NÂNG CẤP ("KHÓ TÍNH" HƠN) ---
     checker_prompt = PromptTemplate(
@@ -68,10 +97,12 @@ def sufficiency_checker_node(state):
         reason = result.get("reason", "")
         
         print(f"   -> Đánh giá: {status} ({reason})")
-        
-        return {"check_status": status}
+        state.check_status = status
+        state.node_trace.append("checker")
+        return state
         
     except Exception as e:
         print(f"⚠️ Lỗi Checker: {e}")
-        # Mặc định cho là đủ để Writer xử lý nếu lỗi
-        return {"check_status": "SUFFICIENT"}
+        state.check_status = "SUFFICIENT"
+        state.node_trace.append("checker")
+        return state
