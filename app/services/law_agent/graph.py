@@ -1,56 +1,111 @@
+"""
+LangGraph workflow for Legal Agentic RAG.
+
+Production-ready version with:
+- strict routing
+- safe state handling
+- deterministic branching
+"""
+
 from langgraph.graph import StateGraph, END
+from typing import Literal
+
 from .state import LawAgentState
 
-# Import các Node
+# Import nodes
 from .nodes.contextualize_agent import contextualize_node
 from .nodes.router_agent import router_node
 from .nodes.retrieval_agent import retriever_node
 from .nodes.checker_agent import sufficiency_checker_node
 from .nodes.writer_agent import answer_node
 from .nodes.fallback_agent import fallback_node
+from .nodes.clarifier_agent import clarifier_node
+
+# ==========================================================
+# Graph Definition
+# ==========================================================
 
 workflow = StateGraph(LawAgentState)
 
-# Add Nodes
-workflow.add_node("contextualize", contextualize_node) 
+
+# ----------------------
+# Register Nodes
+# ----------------------
+
+workflow.add_node("contextualize", contextualize_node)
 workflow.add_node("router", router_node)
 workflow.add_node("retriever", retriever_node)
 workflow.add_node("checker", sufficiency_checker_node)
 workflow.add_node("answer", answer_node)
 workflow.add_node("fallback", fallback_node)
+workflow.add_node("clarifier", clarifier_node)
 
-# --- SỬA LẠI LUỒNG ĐI (EDGES) ---
 
-# 1. Điểm bắt đầu -> Vào Contextualize trước (để sửa câu hỏi)
+
+# ----------------------
+# Entry Point
+# ----------------------
+
 workflow.set_entry_point("contextualize")
 
-# 2. Contextualize -> Router (Router sẽ dùng câu hỏi đã sửa để phân loại)
+
+# ----------------------
+# Linear Flow
+# ----------------------
+
 workflow.add_edge("contextualize", "router")
-
-# 3. Router -> Retriever
 workflow.add_edge("router", "retriever")
-
-# 4. Retriever -> Checker
 workflow.add_edge("retriever", "checker")
 
-# Logic rẽ nhánh (Giữ nguyên)
-def route_after_check(state):
-    status = state.get("check_status", "NO_LAW")
-    if status == "SUFFICIENT":
-        return "answer"
-    else:
+
+# ----------------------
+# Conditional Branching
+# ----------------------
+
+def route_after_check(state: LawAgentState) -> Literal["answer", "clarifier", "fallback"]:
+    """
+    Decide next node based on sufficiency check.
+
+    Routing logic:
+    - SUFFICIENT → answer node
+    - MISSING_INFO → clarifier node
+    - NO_LAW or others → fallback node
+    """
+
+    if state.check_status is None:
         return "fallback"
+
+    if state.check_status == "SUFFICIENT":
+        return "answer"
+
+    if state.check_status == "MISSING_INFO":
+        return "clarifier"
+
+    return "fallback"
+
 
 workflow.add_conditional_edges(
     "checker",
     route_after_check,
     {
         "answer": "answer",
-        "fallback": "fallback"
-    }
+        "clarifier": "clarifier",
+        "fallback": "fallback",
+    },
 )
 
+
+# ----------------------
+# Terminal Edges
+# ----------------------
+
 workflow.add_edge("answer", END)
+workflow.add_edge("clarifier", END)
 workflow.add_edge("fallback", END)
+
+
+# ==========================================================
+# Compile
+# ==========================================================
 
 app = workflow.compile()

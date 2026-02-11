@@ -1,10 +1,12 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from app.core.config import llm
+from app.core.clients import get_llm
+from app.services.law_agent.state import LawAgentState
 
-def router_node(state):
+def router_node(state: LawAgentState) -> LawAgentState:
     """Node 1: Router Agent - Điều hướng và xác định số lượng tài liệu cần tìm"""
-    query = state.get("standalone_query", state["query"])
+    llm = get_llm()
+    query = state.standalone_query or state.query
     print(f"🧠 [ROUTER]: Phân tích hướng đi cho '{query}'...")
 
     prompt = PromptTemplate(
@@ -48,9 +50,9 @@ def router_node(state):
         # Fallback an toàn: Nếu lỗi thì mặc định tìm Hình sự với limit 10
         decision = {"intent": "SEARCH_PENAL", "limit": 10}
 
-    print(f"   -> Quyết định: {decision}")
+    state.intent = decision.get("intent", "SEARCH_PENAL")
+    state.search_limit = decision.get("limit", 10)
     
-    return {
-        "intent": decision.get("intent", "SEARCH_PENAL"),
-        "search_limit": decision.get("limit", 10) # Default an toàn
-    }
+    print(f"   -> Quyết định: {decision}")
+    state.node_trace.append("router")
+    return state

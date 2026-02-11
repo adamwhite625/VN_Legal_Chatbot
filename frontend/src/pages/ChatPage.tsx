@@ -1,50 +1,56 @@
+import { Toaster, toast } from "sonner"; // Import Toast
+
 import Sidebar from "@/components/sidebar/Sidebar";
-import ChatMessages from "@/components/chat/ChatMessages";
+import ChatList from "@/components/chat/ChatList"; // Component hiển thị list chat mới
 import ChatInput from "@/components/chat/ChatInput";
-import { useChat } from "@/hooks/useChat";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import ChatHeader from "@/components/chat/ChatHeader";
+import { useChat } from "@/hooks/useChat";
 
 export default function ChatPage() {
   const chat = useChat();
 
+  // Hàm wrapper để xử lý sự kiện gửi từ Input
+  const handleSendWrapper = async () => {
+    if (chat.loading) return;
+    await chat.send();
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Thông báo nổi (Toast) */}
+      <Toaster position="top-right" richColors />
+
       {/* Sidebar - Cột trái */}
-      <div className="w-[280px] hidden md:block shrink-0 border-r">
+      <div className="w-[280px] hidden md:block shrink-0 border-r bg-muted/10">
         <Sidebar
           sessions={chat.sessions}
-          currentSessionId={null}
+          currentSessionId={chat.sessionId}
           onSelect={chat.selectSession}
-          onNew={() => {}}
+          onNew={chat.resetSession} // Nút Chat mới
         />
       </div>
 
       {/* Main Chat - Cột phải */}
-      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-background">
         {/* Header */}
         <ChatHeader />
 
-        {/* Messages Area */}
-        <div className="flex-1 min-h-0 overflow-hidden relative">
-          <ScrollArea className="h-full">
-            <div className="px-6 py-6">
-              <ChatMessages messages={chat.messages} />
-              <div ref={chat.scrollRef} className="h-4" />{" "}
-              {/* Spacer cuối cùng */}
-            </div>
-          </ScrollArea>
-        </div>
+        {/* Khu vực tin nhắn (Đã thay ScrollArea bằng ChatList tự xử lý scroll) */}
+        <ChatList messages={chat.messages} isLoading={chat.loading} />
 
-        {/* Input Area - SỬA ĐOẠN NÀY */}
-        {/* Dùng đúng cấu trúc: h-[88px] border-t flex items-center */}
-        <div className="h-[88px] border-t flex items-center px-6 bg-background shrink-0 z-10">
-          <ChatInput
-            value={chat.input}
-            onChange={chat.setInput}
-            onSend={chat.send}
-            disabled={chat.loading}
-          />
+        {/* Khu vực nhập liệu */}
+        <div className="p-4 bg-background border-t">
+          <div className="max-w-3xl mx-auto w-full">
+            <ChatInput
+              value={chat.input}
+              onChange={chat.setInput}
+              onSend={handleSendWrapper}
+              disabled={chat.loading}
+            />
+            <div className="text-xs text-center text-muted-foreground mt-2 opacity-70">
+              AI có thể mắc lỗi. Hãy luôn kiểm tra lại với văn bản luật gốc.
+            </div>
+          </div>
         </div>
       </div>
     </div>
