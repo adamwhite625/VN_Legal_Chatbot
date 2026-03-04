@@ -4,6 +4,7 @@ import { getCurrentUser } from "../api/authApi";
 interface User {
   email: string;
   full_name?: string;
+  role?: "user" | "admin";
 }
 
 interface AuthState {

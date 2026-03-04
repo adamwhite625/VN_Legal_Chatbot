@@ -5,6 +5,7 @@ import LoginPage from "@/features/auth/pages/LoginPage";
 import RegisterPage from "@/features/auth/pages/RegisterPage";
 import GlobalConsultantPage from "@/features/consultant/pages/GlobalConsultantPage";
 import TrackingPage from "@/features/workspace/pages/TrackingPage";
+import AdminDashboardPage from "@/features/admin/pages/AdminDashboardPage";
 
 function NotFound() {
   return <div className="p-10">404 - Page Not Found</div>;
@@ -20,7 +21,8 @@ export default function AppRouter() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/consultant" element={<GlobalConsultantPage />} />
-        <Route path="/tracking" element={<TrackingPage />} />{" "}
+        <Route path="/tracking" element={<TrackingPage />} />
+        <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
